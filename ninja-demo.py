@@ -5,9 +5,11 @@ Usage:
 """
 import contextlib
 import docopt
+import os
 import paramiko
 import sys
 import threading
+import time
 import tty
 
 @contextlib.contextmanager
@@ -29,6 +31,28 @@ def display_thread(channel):
         sys.stdout.write(data)
         sys.stdout.flush()
 
+def parse_next_char(f):
+    ch = f.read(1)
+
+    if ch != '\\':
+        return ch
+
+    ch = f.read(1)
+
+    if ch == '\\':
+        return '\\'
+    
+    if ch == 'x':
+        return f.read(2).decode('hex')
+
+    if ch == 'b':
+        while sys.stdin.read(1) != ' ':
+            pass
+
+        return ''
+
+    raise Exception('Invalid escape sequence')
+
 def main():
     options = docopt.docopt(__doc__)
     host = options['<host>']
@@ -43,15 +67,19 @@ def main():
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     client.connect(host, username = username)
-    channel = client.invoke_shell()
+
+    width, height = [int(s) for s in os.popen('stty size', 'r').read().split()]
+    channel = client.invoke_shell(width = width, height = height)
     
     with joining(threading.Thread(target = display_thread, args = [channel])):
         with contextlib.closing(channel):
-            fd = sys.stdin.fileno()
-            tty.setcbreak(fd) # echo off
+            with open(script) as f:
+                fd = sys.stdin.fileno()
+                tty.setcbreak(fd)
 
-            while True:
-                channel.send(sys.stdin.read(1))
+                while True:
+                    sys.stdin.read(1)
+                    channel.send(parse_next_char(f))
 
 if __name__ == '__main__':
     main()
